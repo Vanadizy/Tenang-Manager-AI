@@ -10,13 +10,6 @@ import onboarding from './routes/onboarding.js';
 
 const app = express();
 
-const allowedOrigins = (
-  process.env.CLIENT_URL || 'https://myapp.pangaleo.co.tz'
-)
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -25,9 +18,7 @@ app.use(
 
 app.use(
   cors({
-    origin: allowedOrigins,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-App-Language'],
+    origin: '*',
   }),
 );
 
