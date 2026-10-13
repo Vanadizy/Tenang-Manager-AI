@@ -1,0 +1,186 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PaymentFrequency {
+  monthly
+  weekly
+  quarterly
+}
+
+enum RecordStatus {
+  pending
+  partial
+  paid
+  overdue
+  active
+  expired
+  terminated
+}
+
+enum BillType {
+  water
+  electricity
+  other
+}
+
+model User {
+  id                String     @id @default(cuid())
+  name              String
+  email             String     @unique
+  passwordHash      String
+  phone             String?
+  preferredLanguage String     @default("en")
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  emailLogs         EmailLog[]
+  contracts         Contract[]
+  settings          Setting[]
+}
+
+model Unit {
+  id           String   @id @default(cuid())
+  name         String
+  propertyName String
+  address      String?
+  description  String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  leases       Lease[]
+
+  @@index([propertyName, name])
+}
+
+model Tenant {
+  id               String   @id @default(cuid())
+  fullName         String
+  phone            String
+  email            String?
+  idNumber         String?
+  emergencyContact String?
+  emergencyPhone   String?
+  notes            String?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  leases           Lease[]
+
+  @@index([fullName])
+}
+
+model Lease {
+  id               String           @id @default(cuid())
+  tenantId         String
+  unitId           String
+  startDate        DateTime
+  endDate          DateTime
+  rentAmount       Decimal          @db.Decimal(14, 2)
+  paymentFrequency PaymentFrequency @default(monthly)
+  depositAmount    Decimal          @default(0) @db.Decimal(14, 2)
+  status           RecordStatus     @default(active)
+  notes            String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  unit             Unit             @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  rentPayments     RentPayment[]
+  bills            Bill[]
+  contracts        Contract[]
+
+  @@index([status, endDate])
+}
+
+model RentPayment {
+  id            String       @id @default(cuid())
+  leaseId       String
+  periodStart   DateTime
+  periodEnd     DateTime
+  amountDue     Decimal      @db.Decimal(14, 2)
+  amountPaid    Decimal      @default(0) @db.Decimal(14, 2)
+  paymentDate   DateTime?
+  reminderDate  DateTime?
+  paymentMethod String?
+  reference     String?
+  status        RecordStatus @default(pending)
+  notes         String?
+  createdAt     DateTime     @default(now())
+  lease         Lease        @relation(fields: [leaseId], references: [id], onDelete: Cascade)
+  receipts      PaymentReceipt[]
+
+  @@index([status, periodEnd])
+}
+
+model PaymentReceipt {
+  id            String      @id @default(cuid())
+  rentPaymentId String
+  amount        Decimal     @db.Decimal(14, 2)
+  paymentDate   DateTime    @default(now())
+  paymentMethod String?
+  reference     String?
+  createdAt     DateTime    @default(now())
+  rentPayment   RentPayment @relation(fields: [rentPaymentId], references: [id], onDelete: Cascade)
+
+  @@index([rentPaymentId, paymentDate])
+}
+
+model Bill {
+  id          String       @id @default(cuid())
+  leaseId     String
+  billType    BillType
+  description String
+  amountDue   Decimal      @db.Decimal(14, 2)
+  amountPaid  Decimal      @default(0) @db.Decimal(14, 2)
+  dueDate     DateTime
+  paymentDate DateTime?
+  status      RecordStatus @default(pending)
+  createdAt   DateTime     @default(now())
+  lease       Lease        @relation(fields: [leaseId], references: [id], onDelete: Cascade)
+
+  @@index([status, dueDate])
+}
+
+model EmailLog {
+  id           String    @id @default(cuid())
+  recipient    String
+  subject      String
+  bodyPreview  String    @db.Text
+  emailType    String
+  status       String
+  errorMessage String?
+  relatedId    String?
+  sentAt       DateTime?
+  createdAt    DateTime  @default(now())
+  userId       String?
+  user         User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([emailType, status])
+}
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([key, userId])
+}
+
+model Contract {
+  id          String   @id @default(cuid())
+  leaseId     String
+  filePath    String
+  language    String
+  generatedAt DateTime @default(now())
+  generatedBy String?
+  lease       Lease    @relation(fields: [leaseId], references: [id], onDelete: Cascade)
+  user        User?    @relation(fields: [generatedBy], references: [id], onDelete: SetNull)
+
+  @@index([leaseId, language])
+}

@@ -1,0 +1,2 @@
+﻿import React,{useContext}from'react';import{Data}from'./state.js';import{useTranslation}from'react-i18next';
+export default function ConnectionNotice(){const{t}=useTranslation();const{connected,loading,loadError,refresh}=useContext(Data);if(connected)return null;return <div className="connection-alert"><span>{loading?t('connectingSaved'):loadError||t('notConnectedChanges')}</span><button className="btn btn-outline btn-sm" onClick={refresh} disabled={loading}>{loading?t('connecting'):t('retryConnection')}</button></div>}
