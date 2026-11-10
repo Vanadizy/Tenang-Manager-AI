@@ -9,8 +9,7 @@ datasource db {
 
 enum PaymentFrequency {
   monthly
-  weekly
-  quarterly
+  yearly
 }
 
 enum RecordStatus {
@@ -41,6 +40,36 @@ model User {
   emailLogs         EmailLog[]
   contracts         Contract[]
   settings          Setting[]
+  chatMessages      ChatMessage[]
+  chatConversations ChatConversation[]
+  units             Unit[]
+  tenants           Tenant[]
+}
+
+model ChatConversation {
+  id        String        @id @default(cuid())
+  title     String        @default("New chat")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  ChatMessage[]
+
+  @@index([userId, updatedAt])
+}
+
+model ChatMessage {
+  id             String           @id @default(cuid())
+  role           String
+  content        String           @db.Text
+  createdAt      DateTime         @default(now())
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String?
+  conversation   ChatConversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([conversationId, createdAt])
 }
 
 model Unit {
@@ -52,6 +81,9 @@ model Unit {
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   leases       Lease[]
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  monthlyRent  Decimal? @db.Decimal(14, 2)
 
   @@index([propertyName, name])
 }
@@ -69,6 +101,8 @@ model Tenant {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   leases           Lease[]
+  userId           String?
+  user             User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([fullName])
 }
@@ -80,6 +114,7 @@ model Lease {
   startDate        DateTime
   endDate          DateTime
   rentAmount       Decimal          @db.Decimal(14, 2)
+  monthlyRent      Decimal          @default(0) @db.Decimal(14, 2)
   paymentFrequency PaymentFrequency @default(monthly)
   depositAmount    Decimal          @default(0) @db.Decimal(14, 2)
   status           RecordStatus     @default(active)

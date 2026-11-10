@@ -1,0 +1,11 @@
+ALTER TABLE "Unit" ADD COLUMN "userId" TEXT;
+ALTER TABLE "Tenant" ADD COLUMN "userId" TEXT;
+ALTER TABLE "Unit" ADD COLUMN "monthlyRent" DECIMAL(14,2);
+ALTER TABLE "Lease" ADD COLUMN "monthlyRent" DECIMAL(14,2) NOT NULL DEFAULT 0;
+UPDATE "Lease" SET "monthlyRent" = "rentAmount";
+UPDATE "Unit" SET "userId" = (SELECT "id" FROM "User" ORDER BY "createdAt" LIMIT 1) WHERE "userId" IS NULL;
+UPDATE "Tenant" SET "userId" = (SELECT "id" FROM "User" ORDER BY "createdAt" LIMIT 1) WHERE "userId" IS NULL;
+ALTER TABLE "Unit" ADD CONSTRAINT "Unit_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Tenant" ADD CONSTRAINT "Tenant_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+CREATE INDEX "Unit_userId_idx" ON "Unit"("userId");
+CREATE INDEX "Tenant_userId_idx" ON "Tenant"("userId");

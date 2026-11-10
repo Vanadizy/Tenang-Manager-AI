@@ -7,6 +7,7 @@ import auth from './routes/auth.js';
 import api from './routes/api.js';
 import settings from './routes/settings.js';
 import onboarding from './routes/onboarding.js';
+import assistant from './routes/assistant.js';
 
 const app = express();
 
@@ -35,6 +36,7 @@ app.use(
 
 app.use('/api/settings', settings);
 app.use('/api/onboarding', onboarding);
+app.use('/api/assistant', assistant);
 app.use('/api', api);
 
 app.get('/health', (_req, res) => {
