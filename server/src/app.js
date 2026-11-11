@@ -1,6 +1,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import { randomUUID } from 'node:crypto';
 
 import auth from './routes/auth.js';
 import api from './routes/api.js';
@@ -10,11 +11,18 @@ import assistant from './routes/assistant.js';
 
 const app = express();
 
+app.use((req, res, next) => {
+  req.requestId = randomUUID();
+  res.setHeader('X-Request-Id', req.requestId);
+  next();
+});
+
 app.use(
   (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-App-Language');
+    res.setHeader('Access-Control-Expose-Headers', 'X-Request-Id');
     res.setHeader('Access-Control-Max-Age', '600');
 
     if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -49,7 +57,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  console.error('[api error]', req.method, req.originalUrl, err);
+  console.error('[api error]', req.requestId, req.method, req.originalUrl, err);
 
   if (res.headersSent) {
     return next(err);
@@ -75,7 +83,7 @@ app.use((err, req, res, next) => {
     message = 'This information is already in use. Check the record and try again.';
   }
 
-  res.status(status).json({ error: message });
+  res.status(status).json({ error: message, requestId: req.requestId });
 });
 
 export default app;

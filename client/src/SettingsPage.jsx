@@ -1,17 +1,18 @@
 import React,{useContext,useEffect,useState}from'react';
 import{useNavigate}from'react-router-dom';
 import{Settings,Bell,UserRound,MailCheck,Sparkles}from'lucide-react';
-import{api,Lang,Auth,notify}from'./state.js';
+import{api,apiErrorMessage,Lang,Auth,notify}from'./state.js';
 import{useTranslation}from'react-i18next';
 
 export default function SettingsPage(){
  const{t}=useTranslation(),{language,changeLanguage}=useContext(Lang),{updateUser}=useContext(Auth),navigate=useNavigate();
  const[settings,setSettings]=useState({rentReminderDays:5,leaseReminderDays:30,ownerAlertEmails:'',reminderTime:'08:00',assistantMode:'system'});
  const[profile,setProfile]=useState({name:'',email:'',phone:''});
- const[saved,setSaved]=useState(''),[error,setError]=useState(''),[diagnostic,setDiagnostic]=useState(null),[checkingEmail,setCheckingEmail]=useState(false);
+ const[saved,setSaved]=useState(''),[error,setError]=useState(''),[diagnostic,setDiagnostic]=useState(null),[checkingEmail,setCheckingEmail]=useState(false),[confirmMode,setConfirmMode]=useState(false),[savingMode,setSavingMode]=useState(false);
  useEffect(()=>{Promise.all([api.get('/settings'),api.get('/auth/me'),api.get('/assistant/settings')]).then(([a,b,c])=>{setSettings({...a.data.settings,...c.data.settings});setProfile({name:b.data.name||'',email:b.data.email||'',phone:b.data.phone||''})}).catch(e=>setError(e.response?.data?.error||t('couldNotSettings')))},[]);
  async function saveSettings(){try{let{data}=await api.put('/settings',settings);setSettings({...settings,...data.settings});setSaved(t('settingsSaved'));notify(t('settingsSaved'),'success');setError('')}catch(e){setError(e.response?.data?.error||t('unableSaveSettings'))}}
- async function saveAssistantMode(){try{await api.put('/assistant/settings',{assistantMode:settings.assistantMode});window.dispatchEvent(new CustomEvent('assistant-mode-changed',{detail:settings.assistantMode}));setSaved(t('settingsSaved'));notify(t('settingsSaved'),'success');setError('');navigate(settings.assistantMode==='chat'?'/assistant':'/')}catch(e){setError(e.response?.data?.error||t('unableSaveSettings'))}}
+ function saveAssistantMode(){setError('');setConfirmMode(true)}
+ async function confirmAssistantMode(){setSavingMode(true);try{await api.put('/assistant/settings',{assistantMode:settings.assistantMode},{skipGlobalError:true});window.dispatchEvent(new CustomEvent('assistant-mode-changed',{detail:settings.assistantMode}));setSaved(t('settingsSaved'));notify(t('settingsSaved'),'success');setError('');setConfirmMode(false);navigate(settings.assistantMode==='chat'?'/assistant':'/')}catch(e){setError(apiErrorMessage(e)||t('unableSaveSettings'))}finally{setSavingMode(false)}}
  async function saveProfile(){try{let{data}=await api.put('/auth/profile',profile);updateUser(data);setSaved(t('profileSaved'));notify(t('profileSaved'),'success');setError('')}catch(e){setError(e.response?.data?.error||t('unableSaveProfile'))}}
  async function checkEmail(){setCheckingEmail(true);setDiagnostic(null);try{const{data}=await api.post('/settings/email-test');setDiagnostic(data);if(data.success)notify(t('emailTestSuccess'),'success')}catch(e){setDiagnostic({success:false,problemKey:'smtpGenericError',details:e.response?.data?.error||e.message})}finally{setCheckingEmail(false)}}
  return <>
@@ -42,5 +43,6 @@ export default function SettingsPage(){
    </section>
    <section className="panel settings-panel"><div className="panel-heading"><div><h2>{t('language')}</h2><p>{t('availableLanguages')}</p></div></div><label className="setting-row"><span><strong>{t('displayLanguage')}</strong></span><select value={language} onChange={e=>changeLanguage(e.target.value)}><option value="en">English</option><option value="sw">Kiswahili</option></select></label></section>
   </div>
+  {confirmMode&&<div className="modal-backdrop" role="presentation" onMouseDown={e=>e.target===e.currentTarget&&!savingMode&&setConfirmMode(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="assistant-mode-confirm-title"><div className="modal-heading"><div><span className="eyebrow">{t('aiAgent')}</span><h2 id="assistant-mode-confirm-title">{t(settings.assistantMode==='chat'?'switchToChatMode':'switchToSystemMode')}</h2></div></div><div className="record-form"><p>{t(settings.assistantMode==='chat'?'confirmSwitchToChat':'confirmSwitchToSystem')}</p>{error&&<div className="alert-error" role="alert">{error}</div>}<div className="modal-actions"><button type="button" className="btn btn-outline" onClick={()=>setConfirmMode(false)} disabled={savingMode}>{t('cancel')}</button><button type="button" className="btn btn-primary" onClick={confirmAssistantMode} disabled={savingMode}>{savingMode?t('saving'):t(settings.assistantMode==='chat'?'switchToChatMode':'switchToSystemMode')}</button></div></div></section></div>}
  </>
 }
