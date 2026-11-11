@@ -443,5 +443,6 @@
   "leaseDurationMonths": "months",
   "calculateLeaseTotal": "Calculate total",
   "previewLease": "Preview PDF",
-  "assistantPortfolioEmailTitle": "Email portfolio overview"
+  "assistantTenantListEmailTitle": "Email tenant list",
+  "assistantTenantListEmailTitle":"Email tenant list","assistantPortfolioEmailTitle": "Email portfolio overview"
 }

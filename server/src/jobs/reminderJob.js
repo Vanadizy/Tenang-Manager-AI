@@ -59,4 +59,4 @@ export async function runReminders(targetOwnerId=null){
 // Run the reminder scan once daily at 08:00 Dar es Salaam time. Scanning every
 // minute queried Prisma 1,440 times per day per app instance, including duplicate
 // cPanel instances, even though reminders only need a daily pass.
-cron.schedule('0 8 * * *',async()=>{try{await runReminders()}catch(error){console.error('[reminder job]',error)}},{timezone:timeZone});
+cron.schedule('* * * * *',async()=>{try{const now=new Intl.DateTimeFormat('en-GB',{timeZone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date());const owners=await prisma.user.findMany({select:{id:true}});for(const owner of owners){const cfg=await settingsFor(owner.id);if((cfg.reminderTime||'08:00')===now)await runReminders(owner.id)}}catch(error){console.error('[reminder job]',error)}},{timezone:timeZone});
