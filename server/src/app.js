@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
@@ -12,14 +11,20 @@ import assistant from './routes/assistant.js';
 const app = express();
 
 app.use(
-  helmet({
-    crossOriginResourcePolicy: { policy: 'cross-origin' },
-  }),
+  (req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-App-Language');
+    res.setHeader('Access-Control-Max-Age', '600');
+
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+  },
 );
 
 app.use(
-  cors({
-    origin: '*',
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
   }),
 );
 
