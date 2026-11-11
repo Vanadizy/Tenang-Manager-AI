@@ -1,2 +1,2 @@
-﻿import { PrismaClient } from '@prisma/client';
-const prisma=new PrismaClient();
+// Keep a single Prisma client and PostgreSQL pool for the whole application.
+export { prisma } from './prisma.js';

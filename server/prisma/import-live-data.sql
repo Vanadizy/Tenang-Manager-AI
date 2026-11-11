@@ -1,13 +1,3 @@
--- Data import converted from tenant manager.sql for pgAdmin Query Tool.
-
--- Run only after creating the current schema (manual-bootstrap.sql) in an EMPTY database.
-
--- This imports the exported rows; it does not create tables.
-
-BEGIN;
-
-INSERT INTO public."User" (id, name, email, "passwordHash", phone, "preferredLanguage", "createdAt", "updatedAt") VALUES
-('cmv4qowf10000peu4x3ht62hu', 'MR SWAI', 'vanadizyemachazy@gmail.com', '$2a$12$wOYEB7H6NZkmkepUTkPz6.e93OTQ5/fKErmO6BWAmjRMI/yPn8K0O', '0628115130', 'en', '2026-10-12 04:15:59.006', '2026-11-10 10:19:18.771');
 
 INSERT INTO public."Tenant" (id, "fullName", phone, email, "idNumber", "emergencyContact", "emergencyPhone", notes, "isActive", "createdAt", "updatedAt", "userId") VALUES
 ('cmv4w5u4s0003pex0rx8hziwm', 'EMMANUEL CHARLES', '0628115130', 'kachehubinfo@gmail.com', '20021227331130000122', NULL, NULL, NULL, 't', '2026-10-12 06:49:07.276', '2026-10-12 06:49:07.276', 'cmv4qowf10000peu4x3ht62hu'),
@@ -467,6 +457,3 @@ INSERT INTO public."Setting" (id, key, value, "updatedAt", "userId") VALUES
 ('cmwa8l76r0007pe9g1qtiv6ua', 'reminderTime', '08:00', '2026-11-10 05:34:06.197', 'cmv4qowf10000peu4x3ht62hu'),
 ('cmwa8l77e000fpe9gos1qadi9', 'contractTerms', '', '2026-11-10 05:34:06.211', 'cmv4qowf10000peu4x3ht62hu'),
 ('cmwa8l7790009pe9g9453syt0', 'assistantMode', 'chat', '2026-11-10 10:44:54.304', 'cmv4qowf10000peu4x3ht62hu');
-
-
-COMMIT;
