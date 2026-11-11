@@ -26,7 +26,8 @@ export async function withPdfPage(render) {
     if (!browserPromise) {
       browserPromise = puppeteer.launch({
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
       }).catch(error => {
         browserPromise = undefined;
         throw error;
@@ -38,7 +39,8 @@ export async function withPdfPage(render) {
       browserPromise = undefined;
       browserPromise = puppeteer.launch({
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
       }).catch(error => {
         browserPromise = undefined;
         throw error;

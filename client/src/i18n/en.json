@@ -439,5 +439,9 @@
   "assistantQuickPayment": "Help me record a rent payment?",
   "assistantDeleteConversation": "Delete this chat",
   "assistantDeleteConversationConfirm": "Delete chat \"{{title}}\" and all its messages?",
-  "assistantDeleteConversationError": "Could not delete this chat."
+  "assistantDeleteConversationError": "Could not delete this chat.",
+  "leaseDurationMonths": "months",
+  "calculateLeaseTotal": "Calculate total",
+  "previewLease": "Preview PDF",
+  "assistantPortfolioEmailTitle": "Email portfolio overview"
 }

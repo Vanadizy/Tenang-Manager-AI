@@ -437,5 +437,9 @@
   "assistantQuickPayment": "Nisaidie kurekodi malipo ya kodi?",
   "assistantDeleteConversation": "Futa mazungumzo haya",
   "assistantDeleteConversationConfirm": "Ufute mazungumzo \"{{title}}\" na ujumbe wake wote?",
-  "assistantDeleteConversationError": "Imeshindikana kufuta mazungumzo haya."
+  "assistantDeleteConversationError": "Imeshindikana kufuta mazungumzo haya.",
+  "leaseDurationMonths": "miezi",
+  "calculateLeaseTotal": "Hesabu jumla",
+  "previewLease": "Onyesha PDF",
+  "assistantPortfolioEmailTitle": "Tuma muhtasari wa mali kwa barua pepe"
 }
