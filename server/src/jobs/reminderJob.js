@@ -5,6 +5,7 @@ import {statusForAmounts} from '../services/statusService.js';
 import {generateContract} from '../services/pdfContractService.js';
 
 const timeZone='Africa/Dar_es_Salaam';
+let reminderRunInProgress = false;
 const dayInDar=value=>new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
 const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 
@@ -16,6 +17,9 @@ async function settingsFor(userId){
 }
 
 export async function runReminders(targetOwnerId=null){
+ if(reminderRunInProgress)return;
+ reminderRunInProgress=true;
+ try {
  const today=dayInDar(new Date()),todayStart=new Date(today+'T00:00:00.000Z'),owners=await prisma.user.findMany({where:targetOwnerId?{id:targetOwnerId}:undefined});
  for(const owner of owners){
   const cfg=await settingsFor(owner.id),emails=[...new Set([owner.email,...(cfg.ownerAlertEmails||'').split(',')].map(value=>value.trim()).filter(Boolean))],leaseTarget=new Date(todayStart);
@@ -47,6 +51,12 @@ export async function runReminders(targetOwnerId=null){
    for(const lease of ending)if(lease.tenant.email){const already=await prisma.emailLog.findFirst({where:{relatedId:lease.id,emailType:'lease-reminder',createdAt:{gte:todayStart}}});if(!already)await sendEmail({to:lease.tenant.email,subject:'Lease ending soon',html:`<p>Hello ${escapeHtml(lease.tenant.fullName)}, your lease for ${escapeHtml(lease.unit.propertyName)}, unit ${escapeHtml(lease.unit.name)}, ends on ${new Date(lease.endDate).toLocaleDateString()}.</p>`,type:'lease-reminder',relatedId:lease.id,userId:owner.id,route:'/leases?record='+lease.id,senderEmail:owner.email})}
   }
  }
+ } finally {
+  reminderRunInProgress=false;
+ }
 }
 
-cron.schedule('* * * * *',async()=>{try{const now=new Intl.DateTimeFormat('en-GB',{timeZone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date());const owners=await prisma.user.findMany({select:{id:true}});for(const owner of owners){const cfg=await settingsFor(owner.id);if(cfg.reminderTime===now)await runReminders(owner.id)}}catch(error){console.error('[reminder job]',error)}},{timezone:timeZone});
+// Run the reminder scan once daily at 08:00 Dar es Salaam time. Scanning every
+// minute queried Prisma 1,440 times per day per app instance, including duplicate
+// cPanel instances, even though reminders only need a daily pass.
+cron.schedule('0 8 * * *',async()=>{try{await runReminders()}catch(error){console.error('[reminder job]',error)}},{timezone:timeZone});
