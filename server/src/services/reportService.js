@@ -1,4 +1,4 @@
-import puppeteer from 'puppeteer';
+import { withPdfPage } from './pdfBrowser.js';
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -35,15 +35,11 @@ export function renderReportHtml(report) {
 
 export async function createReportAttachment(report) {
   const html = renderReportHtml(report);
-  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-  try {
-    const page = await browser.newPage();
+  const content = await withPdfPage(async page => {
     await page.setContent(html, { waitUntil: 'load' });
-    const content = await page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true });
-    const date = new Date(report.generatedAt || new Date()).toISOString().slice(0, 10);
-    const filename = `${report.filePrefix || 'tenantflow-report'}-${date}.pdf`;
-    return { html, attachment: { filename, content: Buffer.from(content), contentType: 'application/pdf' } };
-  } finally {
-    await browser.close();
-  }
+    return page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true });
+  });
+  const date = new Date(report.generatedAt || new Date()).toISOString().slice(0, 10);
+  const filename = `${report.filePrefix || 'tenantflow-report'}-${date}.pdf`;
+  return { html, attachment: { filename, content: Buffer.from(content), contentType: 'application/pdf' } };
 }
