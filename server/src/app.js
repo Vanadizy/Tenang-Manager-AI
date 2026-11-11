@@ -8,6 +8,7 @@ import api from './routes/api.js';
 import settings from './routes/settings.js';
 import onboarding from './routes/onboarding.js';
 import assistant from './routes/assistant.js';
+import { prisma } from './config/prisma.js';
 
 const app = express();
 
@@ -52,8 +53,20 @@ app.use('/api/onboarding', onboarding);
 app.use('/api/assistant', assistant);
 app.use('/api', api);
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'tenant-manager-api' });
+app.get('/health', async (req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: 'ok', database: 'connected', service: 'tenant-manager-api' });
+  } catch (error) {
+    console.error('[health database error]', req.requestId, error);
+    res.status(503).json({
+      status: 'error',
+      database: 'unavailable',
+      service: 'tenant-manager-api',
+      requestId: req.requestId,
+      diagnosticCode: error.code || error.name,
+    });
+  }
 });
 
 app.use((err, req, res, next) => {
@@ -83,7 +96,11 @@ app.use((err, req, res, next) => {
     message = 'This information is already in use. Check the record and try again.';
   }
 
-  res.status(status).json({ error: message, requestId: req.requestId });
+  res.status(status).json({
+    error: message,
+    requestId: req.requestId,
+    diagnosticCode: err.code || err.name,
+  });
 });
 
 export default app;
