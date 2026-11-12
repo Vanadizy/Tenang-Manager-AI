@@ -1,5 +1,5 @@
 import {Router} from 'express';
-import {access} from 'node:fs/promises';
+import {access,unlink} from 'node:fs/promises';
 import {z} from 'zod';
 import {prisma} from '../config/prisma.js';
 import {auth} from '../middleware/auth.js';
@@ -13,25 +13,36 @@ const models={tenants:prisma.tenant,units:prisma.unit,leases:prisma.lease,paymen
 const schemas={tenants:z.object({fullName:z.string().min(2),phone:z.string().min(5),email:z.union([z.string().email(),z.literal('')]).optional(),idNumber:z.string().optional(),emergencyContact:z.string().optional(),emergencyPhone:z.string().optional(),notes:z.string().optional()}),units:z.object({name:z.string().min(1),propertyName:z.string().min(1),address:z.string().optional(),description:z.string().optional(),monthlyRent:z.preprocess(v=>v===''||v===undefined?undefined:v,z.coerce.number().positive())}),leases:z.object({tenantId:z.string().min(1),unitId:z.string().min(1),startDate:z.coerce.date(),endDate:z.coerce.date(),rentAmount:z.coerce.number().positive(),paymentFrequency:z.preprocess(v=>v===''||v===undefined?'monthly':v,z.enum(['monthly','yearly'])),depositAmount:z.preprocess(v=>v===''||v===undefined?0:v,z.coerce.number().min(0)).default(0),notes:z.string().optional()}),payments:z.object({leaseId:z.string(),periodStart:z.coerce.date(),periodEnd:z.coerce.date(),amountDue:z.coerce.number().positive(),amountPaid:z.coerce.number().min(0).default(0),paymentDate:z.coerce.date().optional(),reminderDate:z.coerce.date().optional(),paymentMethod:z.string().optional(),reference:z.string().optional(),notes:z.string().optional()}),bills:z.object({leaseId:z.string(),billType:z.enum(['water','electricity','other']),description:z.string().min(1),amountDue:z.coerce.number().positive(),amountPaid:z.coerce.number().min(0).default(0),dueDate:z.coerce.date(),paymentDate:z.coerce.date().optional()})};
 const includes={contracts:{lease:{include:{tenant:true,unit:true}}},leases:{tenant:true,unit:true},payments:{lease:{include:{tenant:true,unit:true}},receipts:{orderBy:{paymentDate:'asc'}}},bills:{lease:{include:{tenant:true,unit:true}}}};
 function clean(s,b){const input={...b};for(const [key,value] of Object.entries(input))if(value==='')delete input[key];return s.parse(input)}
-async function generateLeaseDocumentsAndNotify(leaseId,userId,language){
+async function generateAndSaveLeaseDocuments(leaseId,userId){
+ const [full,owner,terms]=await Promise.all([
+  prisma.lease.findUnique({where:{id:leaseId},include:{tenant:true,unit:true}}),
+  prisma.user.findUnique({where:{id:userId}}),prisma.setting.findUnique({where:{key_userId:{key:'contractTerms',userId}}})
+ ]);
+ if(!full||!owner)throw new Error('Could not load the lease or owner for PDF generation.');
+ const docs=[];
  try{
-  const [full,owner,terms]=await Promise.all([
-   prisma.lease.findUnique({where:{id:leaseId},include:{tenant:true,unit:true}}),
-   prisma.user.findUnique({where:{id:userId}}),prisma.setting.findUnique({where:{key_userId:{key:'contractTerms',userId}}})
-  ]);
-  if(!full||!owner)return;
-  const docs=[];
-  for(const docLanguage of ['en','sw']){
-   const filePath=await generateContract({...full,owner,terms:terms?.value||''},docLanguage);
-   const saved=await prisma.contract.updateMany({where:{leaseId,generatedBy:userId,language:docLanguage},data:{filePath}});
-   if(saved.count===0)await prisma.contract.create({data:{leaseId,generatedBy:userId,language:docLanguage,filePath}});
-   docs.push({language:docLanguage,filePath});
+  for(const language of ['en','sw']){
+   const filePath=await generateContract({...full,owner,terms:terms?.value||''},language);
+   docs.push({language,filePath});
+   const saved=await prisma.contract.updateMany({where:{leaseId,generatedBy:userId,language},data:{filePath}});
+   if(saved.count===0)await prisma.contract.create({data:{leaseId,generatedBy:userId,language,filePath}});
   }
-  const sw=language==='sw',selected=docs.find(doc=>doc.language===(sw?'sw':'en'));
+  const verified=await prisma.contract.findMany({where:{leaseId,generatedBy:userId,language:{in:['en','sw']}},select:{language:true,filePath:true}});
+  for(const language of ['en','sw'])if(!verified.some(record=>record.language===language&&record.filePath))throw new Error(`Contract path for ${language} was not saved to the database.`);
+  return{full,owner,docs};
+ }catch(error){
+  await prisma.contract.deleteMany({where:{leaseId,generatedBy:userId}}).catch(()=>{});
+  await Promise.all(docs.map(doc=>unlink(doc.filePath).catch(()=>{})));
+  throw error;
+ }
+}
+async function notifyLeaseDocuments(prepared,leaseId,userId,language){
+ try{
+  const {full,owner,docs}=prepared,sw=language==='sw',selected=docs.find(doc=>doc.language===(sw?'sw':'en'));
   const ownerSubject=sw?'Mkataba mpya wa upangaji umetengenezwa':'New lease agreement created';
   const ownerHtml=sw
-   ?`<p>Mkataba wa upangaji umetengenezwa kwa ${full.tenant.fullName} katika ${full.unit.propertyName} · ${full.unit.name}.</p><p>Kipindi cha mkataba: ${new Date(full.startDate).toLocaleDateString('sw-TZ')} hadi ${new Date(full.endDate).toLocaleDateString('sw-TZ')}. Kodi: TZS ${Number(full.rentAmount).toLocaleString('sw-TZ')}.</p><p>Nakala za mkataba zimeambatishwa.</p>`
-   :`<p>A lease agreement was created for ${full.tenant.fullName} at ${full.unit.propertyName} · ${full.unit.name}.</p><p>Lease dates: ${new Date(full.startDate).toLocaleDateString('en-GB')} to ${new Date(full.endDate).toLocaleDateString('en-GB')}. Rent: TZS ${Number(full.rentAmount).toLocaleString('en-US')}.</p><p>English and Kiswahili copies are attached.</p>`;
+   ?`<p>Mkataba wa upangaji umetengenezwa kwa ${full.tenant.fullName} katika ${full.unit.propertyName} &middot; ${full.unit.name}.</p><p>Kipindi cha mkataba: ${new Date(full.startDate).toLocaleDateString('sw-TZ')} hadi ${new Date(full.endDate).toLocaleDateString('sw-TZ')}. Kodi: TZS ${Number(full.rentAmount).toLocaleString('sw-TZ')}.</p><p>Nakala za mkataba zimeambatishwa.</p>`
+   :`<p>A lease agreement was created for ${full.tenant.fullName} at ${full.unit.propertyName} &middot; ${full.unit.name}.</p><p>Lease dates: ${new Date(full.startDate).toLocaleDateString('en-GB')} to ${new Date(full.endDate).toLocaleDateString('en-GB')}. Rent: TZS ${Number(full.rentAmount).toLocaleString('en-US')}.</p><p>English and Kiswahili copies are attached.</p>`;
   const tasks=[sendEmail({to:owner.email,subject:ownerSubject,html:ownerHtml,type:'lease-created',relatedId:leaseId,userId,route:'/leases?record='+leaseId,senderEmail:owner.email,senderName:owner.name,hidePlatformFooter:true,attachments:docs.map(doc=>({filename:`lease-agreement-${doc.language==='sw'?'kiswahili':'english'}.pdf`,path:doc.filePath}))})];
   if(full.tenant.email){
    const tenantSubject=sw?'Mkataba wako wa upangaji uko tayari':'Your rental agreement is ready';
@@ -39,7 +50,7 @@ async function generateLeaseDocumentsAndNotify(leaseId,userId,language){
    tasks.push(sendEmail({to:full.tenant.email,subject:tenantSubject,html:tenantHtml,type:'contract',relatedId:leaseId,userId,route:'/leases?record='+leaseId,senderEmail:owner.email,senderName:owner.name,hidePlatformFooter:true,attachments:[{filename:`rental-agreement-${sw?'kiswahili':'english'}.pdf`,path:selected.filePath}]}));
   }
   await Promise.all(tasks);
- }catch(error){console.error('[lease documents/email]',leaseId,error)}
+ }catch(error){console.error('[lease document email]',leaseId,error)}
 }
 async function leaseHasReceivedPayment(leaseId){
  const payments=await prisma.rentPayment.findMany({where:{leaseId},select:{amountPaid:true,receipts:{select:{amount:true}}}});
@@ -81,7 +92,9 @@ router.post('/'+type,async(req,res,next)=>{try{let p=clean(schemas[type],req.bod
   if(!owner)return res.status(401).json({error:'Please sign in again and retry.'});
   const requestedLanguage=req.get('x-app-language');
   const language=requestedLanguage==='en'||requestedLanguage==='sw'?requestedLanguage:(owner.preferredLanguage==='sw'?'sw':'en');
-  setImmediate(()=>{void generateLeaseDocumentsAndNotify(lease.id,req.user.sub,language)});
+  let documents;
+  try{documents=await generateAndSaveLeaseDocuments(lease.id,req.user.sub)}catch(error){await prisma.lease.delete({where:{id:lease.id}}).catch(cleanupError=>console.error('[lease rollback after PDF failure]',lease.id,cleanupError));throw error}
+  setImmediate(()=>{void notifyLeaseDocuments(documents,lease.id,req.user.sub,language)});
   return res.status(201).json({...lease,monthlyRent,termMonths:months,totalRent:monthlyRent*months})
 }
 if(type==='payments'||type==='bills'){const lease=await prisma.lease.findFirst({where:{id:p.leaseId,unit:{userId:req.user.sub}}});if(!lease)return res.status(400).json({error:'Choose a lease from your workspace.'})}if(type==='payments'){let amountPaid=p.amountPaid;if(amountPaid<p.amountDue&&!p.reminderDate)return res.status(400).json({error:'Set a due date for the remaining rent balance.'});delete p.amountPaid;const {paymentDate,paymentMethod,reference}=p;p.status=statusForAmounts(p.amountDue,amountPaid,p.reminderDate||p.periodEnd);let item=await prisma.rentPayment.create({data:{...p,amountPaid,receipts:amountPaid>0?{create:{amount:amountPaid,paymentDate:paymentDate||new Date(),paymentMethod,reference}}:undefined},include:includes.payments});setImmediate(()=>{void notifyPaymentRecorded(item.id,req.user.sub,req.get('x-app-language'))});return res.status(201).json({...item,amountPaid,status:p.status})}if(type==='bills')p.status=statusForAmounts(p.amountDue,p.amountPaid,p.dueDate);res.status(201).json(await model.create({data:p}))}catch(e){next(e)}});
