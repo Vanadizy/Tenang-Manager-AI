@@ -444,6 +444,7 @@
   "leaseDurationMonths": "months",
   "calculateLeaseTotal": "Calculate total",
   "previewLease": "Preview PDF",
+  "printLease": "Print / Save as PDF",
   "assistantTenantListEmailTitle": "Email tenant list",
   "assistantTenantListEmailTitle":"Email tenant list","assistantPortfolioEmailTitle": "Email portfolio overview"
 }
