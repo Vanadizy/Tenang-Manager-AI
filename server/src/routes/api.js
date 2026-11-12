@@ -1,5 +1,5 @@
 import {Router} from 'express';
-import {access,unlink} from 'node:fs/promises';
+import {access,readFile,unlink} from 'node:fs/promises';
 import {z} from 'zod';
 import {prisma} from '../config/prisma.js';
 import {auth} from '../middleware/auth.js';
@@ -101,7 +101,45 @@ if(type==='payments'||type==='bills'){const lease=await prisma.lease.findFirst({
  router.put('/'+type+'/:id',async(req,res,next)=>{try{let current=await model.findUnique({where:{id:req.params.id}});if(!current)return res.status(404).json({error:'This record no longer exists. Refresh the list and try again.'});if(['leases','payments','bills'].includes(type)&&!await model.findFirst({where:{id:req.params.id,...(type==='leases'?{unit:{userId:req.user.sub}}:type==='payments'?{lease:{unit:{userId:req.user.sub}}}:{lease:{unit:{userId:req.user.sub}}})}}))return res.status(404).json({error:'This record could not be found in your workspace.'});if((type==='units'||type==='tenants')&&current.userId!==req.user.sub)return res.status(404).json({error:'This record could not be found in your workspace.'});let p=clean(schemas[type],req.body);if(type==='leases'&&await leaseHasReceivedPayment(req.params.id))return res.status(409).json({error:'This lease has received payments and can no longer be edited.'});if(type==='leases'){if(p.endDate<=p.startDate)return res.status(400).json({error:'Lease end date must be after its start date'});if(!isMonthlyRange(p.startDate,p.endDate))return res.status(400).json({error:'Set the lease end date to the day before a monthly term anniversary.'});const [ownerUnit,ownerTenant]=await Promise.all([prisma.unit.findFirst({where:{id:p.unitId,userId:req.user.sub}}),prisma.tenant.findFirst({where:{id:p.tenantId,userId:req.user.sub}})]);if(!ownerUnit||!ownerTenant)return res.status(400).json({error:'Choose a property and tenant from your workspace.'});const months=leaseMonths(p.startDate,p.endDate);p.monthlyRent=p.rentAmount;p.rentAmount=p.monthlyRent*months;p.status=leaseStatus(p.endDate)}if(type==='payments'){const receipts=await prisma.paymentReceipt.findMany({where:{rentPaymentId:req.params.id}}),received=Math.max(Number(current.amountPaid),receipts.reduce((n,r)=>n+Number(r.amount),0));if(p.amountDue<received)return res.status(400).json({error:'The amount due cannot be lower than what the tenant has already paid.'});delete p.amountPaid;delete p.paymentDate;delete p.paymentMethod;delete p.reference;if(p.amountDue>received&&!p.reminderDate)return res.status(400).json({error:'Set a due date for the remaining rent balance.'});p.status=statusForAmounts(p.amountDue,received,p.reminderDate||p.periodEnd)}if(type==='bills')p.status=statusForAmounts(p.amountDue,p.amountPaid,p.dueDate);res.json(await model.update({where:{id:req.params.id},data:p}))}catch(e){next(e)}});
 router.delete('/'+type+'/:id',async(req,res,next)=>{try{let current=await model.findUnique({where:{id:req.params.id}});if(!current)return res.status(404).json({error:'This record was already removed.'});if(['leases','payments','bills'].includes(type)&&!await model.findFirst({where:{id:req.params.id,...(type==='leases'?{unit:{userId:req.user.sub}}:type==='payments'?{lease:{unit:{userId:req.user.sub}}}:{lease:{unit:{userId:req.user.sub}}})}}))return res.status(404).json({error:'This record could not be found in your workspace.'});if((type==='units'||type==='tenants')&&current.userId!==req.user.sub)return res.status(404).json({error:'This record could not be found in your workspace.'});if(type==='leases'&&await leaseHasReceivedPayment(req.params.id))return res.status(409).json({error:'This lease has received payments and can no longer be deleted.'});if(type==='units'){const linked=await prisma.lease.findMany({where:{unitId:req.params.id},select:{id:true}});if(linked.length){await prisma.unit.update({where:{id:req.params.id},data:{isActive:false}});return res.status(204).end()}}await model.delete({where:{id:req.params.id}});res.status(204).end()}catch(e){next(e)}})
 }
-router.get('/leases/:id/download',async(req,res,next)=>{try{const language=z.enum(['en','sw']).safeParse(req.query.language);if(!language.success)return res.status(400).json({error:'Choose English or Kiswahili before downloading.'});const [lease,owner,terms]=await Promise.all([prisma.lease.findFirst({where:{id:req.params.id,unit:{userId:req.user.sub}},include:{tenant:true,unit:true}}),prisma.user.findUnique({where:{id:req.user.sub}}),prisma.setting.findUnique({where:{key_userId:{key:'contractTerms',userId:req.user.sub}}})]);if(!lease)return res.status(404).json({error:'This lease could not be found in your workspace.'});let contract=await prisma.contract.findFirst({where:{leaseId:lease.id,generatedBy:req.user.sub,language:language.data}}),filePath=contract?.filePath;try{if(!filePath)throw new Error('PDF path not saved');await access(filePath)}catch{filePath=await generateContract({...lease,owner,terms:terms?.value||''},language.data);if(contract){const saved=await prisma.contract.updateMany({where:{leaseId:lease.id,generatedBy:req.user.sub,language:language.data},data:{filePath}});if(saved.count===0)contract=await prisma.contract.create({data:{leaseId:lease.id,generatedBy:req.user.sub,language:language.data,filePath}})}else contract=await prisma.contract.create({data:{leaseId:lease.id,generatedBy:req.user.sub,language:language.data,filePath}})}res.set({'Content-Type':'application/pdf','X-Content-Type-Options':'nosniff','Cache-Control':'private, max-age=300'});res.download(filePath,`lease-agreement-${language.data==='sw'?'kiswahili':'english'}.pdf`,error=>{if(error&&!res.headersSent)next(error)})}catch(e){console.error('[lease PDF generation]',req.requestId,e);if(!res.headersSent)return res.status(500).json({error:'Lease PDF generation failed. Check the server diagnostic log and retry.',requestId:req.requestId,diagnosticCode:e.code||e.name});next(e)}});
+router.get('/leases/:id/download',async(req,res,next)=>{
+ let stage='validate request';
+ try{
+  const language=z.enum(['en','sw']).safeParse(req.query.language);
+  if(!language.success)return res.status(400).json({error:'Choose English or Kiswahili before downloading.'});
+  stage='load lease and owner';
+  const [lease,owner,terms]=await Promise.all([
+   prisma.lease.findFirst({where:{id:req.params.id,unit:{userId:req.user.sub}},include:{tenant:true,unit:true}}),
+   prisma.user.findUnique({where:{id:req.user.sub}}),
+   prisma.setting.findUnique({where:{key_userId:{key:'contractTerms',userId:req.user.sub}}})
+  ]);
+  if(!lease)return res.status(404).json({error:'This lease could not be found in your workspace.'});
+  stage='find contract record';
+  let contract=await prisma.contract.findFirst({where:{leaseId:lease.id,generatedBy:req.user.sub,language:language.data}});
+  let filePath=contract?.filePath;
+  let fileReady=false;
+  if(filePath){try{await access(filePath);fileReady=true}catch{fileReady=false}}
+  if(!fileReady){
+   stage='generate PDF file';
+   filePath=await generateContract({...lease,owner,terms:terms?.value||''},language.data);
+   stage='save PDF path to database';
+   const saved=await prisma.contract.updateMany({where:{leaseId:lease.id,generatedBy:req.user.sub,language:language.data},data:{filePath}});
+   if(saved.count===0)contract=await prisma.contract.create({data:{leaseId:lease.id,generatedBy:req.user.sub,language:language.data,filePath}});
+   stage='verify database path';
+   const stored=await prisma.contract.findFirst({where:{leaseId:lease.id,generatedBy:req.user.sub,language:language.data,filePath},select:{id:true,filePath:true}});
+   if(!stored?.filePath)throw new Error('Generated PDF path was not found in the contract database record.');
+  }
+  stage='verify PDF file';
+  await access(filePath);
+  const pdfBytes=await readFile(filePath);
+  if(pdfBytes.subarray(0,5).toString()!=='%PDF-')throw new Error('Stored contract file is not a valid PDF.');
+  res.set({'Content-Type':'application/pdf','X-Content-Type-Options':'nosniff','Cache-Control':'private, max-age=300'});
+  res.download(filePath,`lease-agreement-${language.data==='sw'?'kiswahili':'english'}.pdf`,error=>{if(error&&!res.headersSent)next(error)});
+ }catch(error){
+  console.error('[lease PDF generation]',req.requestId,{stage,leaseId:req.params.id,code:error.code||error.name,message:error.message});
+  if(!res.headersSent)return res.status(500).json({error:'Lease PDF generation failed.',stage,requestId:req.requestId,diagnosticCode:error.code||error.name});
+  next(error);
+ }
+});
 router.get('/contracts/:id/download',async(req,res,next)=>{try{const c=await prisma.contract.findFirst({where:{id:req.params.id,generatedBy:req.user.sub}});if(!c)return res.status(404).json({error:'The agreement could not be found.'});res.redirect(307,`/api/leases/${c.leaseId}/download?language=${c.language}`)}catch(e){next(e)}});
 router.get('/dashboard',async(req,res,next)=>{try{let[units,leases,tenants,payments,bills]=await Promise.all([prisma.unit.count({where:{userId:req.user.sub,isActive:true}}),prisma.lease.findMany({where:{status:'active',unit:{userId:req.user.sub}},include:{tenant:true,unit:true}}),prisma.tenant.count({where:{userId:req.user.sub}}),prisma.rentPayment.findMany({where:{lease:{unit:{userId:req.user.sub}}},include:{lease:{include:{tenant:true,unit:true}},receipts:{orderBy:{paymentDate:'asc'}}},orderBy:{createdAt:'desc'}}),prisma.bill.findMany({where:{lease:{unit:{userId:req.user.sub}}},include:{lease:{include:{tenant:true,unit:true}}}})]);payments=payments.map(p=>{const amountPaid=Math.max(Number(p.amountPaid),p.receipts.reduce((n,r)=>n+Number(r.amount),0));return {...p,amountPaid,status:statusForAmounts(p.amountDue,amountPaid,p.reminderDate||p.periodEnd)}});res.json({units,leases,tenants,payments,bills})}catch(e){next(e)}});
 export default router;

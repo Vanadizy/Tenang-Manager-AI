@@ -5,6 +5,15 @@ let activePages = 0;
 const maxPdfPages = Math.max(1, Number(process.env.PDF_MAX_CONCURRENT_PAGES) || 1);
 let pageQueue = Promise.resolve();
 
+function launchOptions() {
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_BIN || undefined;
+  return {
+    headless: true,
+    ...(executablePath ? { executablePath } : {}),
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+  };
+}
+
 async function acquirePageSlot() {
   let release;
   const previous = pageQueue;
@@ -24,11 +33,7 @@ export async function withPdfPage(render) {
   const releasePageSlot = await acquirePageSlot();
   try {
     if (!browserPromise) {
-      browserPromise = puppeteer.launch({
-        headless: true,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
-      }).catch(error => {
+      browserPromise = puppeteer.launch(launchOptions()).catch(error => {
         browserPromise = undefined;
         throw error;
       });
@@ -37,11 +42,7 @@ export async function withPdfPage(render) {
     const browser = await browserPromise;
     if (!browser.isConnected()) {
       browserPromise = undefined;
-      browserPromise = puppeteer.launch({
-        headless: true,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
-      }).catch(error => {
+      browserPromise = puppeteer.launch(launchOptions()).catch(error => {
         browserPromise = undefined;
         throw error;
       });
