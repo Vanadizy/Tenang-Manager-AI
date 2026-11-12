@@ -1,5 +1,5 @@
 import {Router} from 'express';
-import {access,readFile,unlink} from 'node:fs/promises';
+import {access,readFile} from 'node:fs/promises';
 import {z} from 'zod';
 import {prisma} from '../config/prisma.js';
 import {auth} from '../middleware/auth.js';
@@ -19,20 +19,22 @@ async function generateAndSaveLeaseDocuments(leaseId,userId){
   prisma.user.findUnique({where:{id:userId}}),prisma.setting.findUnique({where:{key_userId:{key:'contractTerms',userId}}})
  ]);
  if(!full||!owner)throw new Error('Could not load the lease or owner for PDF generation.');
- const docs=[];
+ const docs=[];let stage='generate PDF';
  try{
   for(const language of ['en','sw']){
+   stage=`generate ${language} PDF`;
    const filePath=await generateContract({...full,owner,terms:terms?.value||''},language);
    docs.push({language,filePath});
+   stage=`save ${language} contract path`;
    const saved=await prisma.contract.updateMany({where:{leaseId,generatedBy:userId,language},data:{filePath}});
    if(saved.count===0)await prisma.contract.create({data:{leaseId,generatedBy:userId,language,filePath}});
   }
+  stage='verify saved contract paths';
   const verified=await prisma.contract.findMany({where:{leaseId,generatedBy:userId,language:{in:['en','sw']}},select:{language:true,filePath:true}});
   for(const language of ['en','sw'])if(!verified.some(record=>record.language===language&&record.filePath))throw new Error(`Contract path for ${language} was not saved to the database.`);
   return{full,owner,docs};
  }catch(error){
-  await prisma.contract.deleteMany({where:{leaseId,generatedBy:userId}}).catch(()=>{});
-  await Promise.all(docs.map(doc=>unlink(doc.filePath).catch(()=>{})));
+  error.pdfStage=stage;
   throw error;
  }
 }
@@ -92,10 +94,10 @@ router.post('/'+type,async(req,res,next)=>{try{let p=clean(schemas[type],req.bod
   if(!owner)return res.status(401).json({error:'Please sign in again and retry.'});
   const requestedLanguage=req.get('x-app-language');
   const language=requestedLanguage==='en'||requestedLanguage==='sw'?requestedLanguage:(owner.preferredLanguage==='sw'?'sw':'en');
-  let documents;
-  try{documents=await generateAndSaveLeaseDocuments(lease.id,req.user.sub)}catch(error){await prisma.lease.delete({where:{id:lease.id}}).catch(cleanupError=>console.error('[lease rollback after PDF failure]',lease.id,cleanupError));throw error}
-  setImmediate(()=>{void notifyLeaseDocuments(documents,lease.id,req.user.sub,language)});
-  return res.status(201).json({...lease,monthlyRent,termMonths:months,totalRent:monthlyRent*months})
+  let documents=null,contractGeneration=null;
+  try{documents=await generateAndSaveLeaseDocuments(lease.id,req.user.sub)}catch(error){contractGeneration={stage:error.pdfStage||'load lease data',diagnosticCode:error.code||error.name};console.error('[lease contract generation]',req.requestId,{leaseId:lease.id,...contractGeneration,message:error.message})}
+  if(documents)setImmediate(()=>{void notifyLeaseDocuments(documents,lease.id,req.user.sub,language)});
+  return res.status(201).json({...lease,monthlyRent,termMonths:months,totalRent:monthlyRent*months,contractsReady:!!documents,contractGeneration})
 }
 if(type==='payments'||type==='bills'){const lease=await prisma.lease.findFirst({where:{id:p.leaseId,unit:{userId:req.user.sub}}});if(!lease)return res.status(400).json({error:'Choose a lease from your workspace.'})}if(type==='payments'){let amountPaid=p.amountPaid;if(amountPaid<p.amountDue&&!p.reminderDate)return res.status(400).json({error:'Set a due date for the remaining rent balance.'});delete p.amountPaid;const {paymentDate,paymentMethod,reference}=p;p.status=statusForAmounts(p.amountDue,amountPaid,p.reminderDate||p.periodEnd);let item=await prisma.rentPayment.create({data:{...p,amountPaid,receipts:amountPaid>0?{create:{amount:amountPaid,paymentDate:paymentDate||new Date(),paymentMethod,reference}}:undefined},include:includes.payments});setImmediate(()=>{void notifyPaymentRecorded(item.id,req.user.sub,req.get('x-app-language'))});return res.status(201).json({...item,amountPaid,status:p.status})}if(type==='bills')p.status=statusForAmounts(p.amountDue,p.amountPaid,p.dueDate);res.status(201).json(await model.create({data:p}))}catch(e){next(e)}});
  router.put('/'+type+'/:id',async(req,res,next)=>{try{let current=await model.findUnique({where:{id:req.params.id}});if(!current)return res.status(404).json({error:'This record no longer exists. Refresh the list and try again.'});if(['leases','payments','bills'].includes(type)&&!await model.findFirst({where:{id:req.params.id,...(type==='leases'?{unit:{userId:req.user.sub}}:type==='payments'?{lease:{unit:{userId:req.user.sub}}}:{lease:{unit:{userId:req.user.sub}}})}}))return res.status(404).json({error:'This record could not be found in your workspace.'});if((type==='units'||type==='tenants')&&current.userId!==req.user.sub)return res.status(404).json({error:'This record could not be found in your workspace.'});let p=clean(schemas[type],req.body);if(type==='leases'&&await leaseHasReceivedPayment(req.params.id))return res.status(409).json({error:'This lease has received payments and can no longer be edited.'});if(type==='leases'){if(p.endDate<=p.startDate)return res.status(400).json({error:'Lease end date must be after its start date'});if(!isMonthlyRange(p.startDate,p.endDate))return res.status(400).json({error:'Set the lease end date to the day before a monthly term anniversary.'});const [ownerUnit,ownerTenant]=await Promise.all([prisma.unit.findFirst({where:{id:p.unitId,userId:req.user.sub}}),prisma.tenant.findFirst({where:{id:p.tenantId,userId:req.user.sub}})]);if(!ownerUnit||!ownerTenant)return res.status(400).json({error:'Choose a property and tenant from your workspace.'});const months=leaseMonths(p.startDate,p.endDate);p.monthlyRent=p.rentAmount;p.rentAmount=p.monthlyRent*months;p.status=leaseStatus(p.endDate)}if(type==='payments'){const receipts=await prisma.paymentReceipt.findMany({where:{rentPaymentId:req.params.id}}),received=Math.max(Number(current.amountPaid),receipts.reduce((n,r)=>n+Number(r.amount),0));if(p.amountDue<received)return res.status(400).json({error:'The amount due cannot be lower than what the tenant has already paid.'});delete p.amountPaid;delete p.paymentDate;delete p.paymentMethod;delete p.reference;if(p.amountDue>received&&!p.reminderDate)return res.status(400).json({error:'Set a due date for the remaining rent balance.'});p.status=statusForAmounts(p.amountDue,received,p.reminderDate||p.periodEnd)}if(type==='bills')p.status=statusForAmounts(p.amountDue,p.amountPaid,p.dueDate);res.json(await model.update({where:{id:req.params.id},data:p}))}catch(e){next(e)}});

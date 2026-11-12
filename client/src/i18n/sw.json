@@ -262,6 +262,7 @@
   "saveReceipt": "Hifadhi risiti",
   "couldNotReceipt": "Imeshindikana kurekodi risiti hii.",
   "couldNotSave": "Imeshindikana kuhifadhi taarifa hii. Hakiki sehemu ulizojaza ujaribu tena.",
+  "leaseSavedPdfPending": "Mkataba umehifadhiwa lakini PDF zinasubiri ({{stage}}; {{code}}). Fungua preview au pakua tena ili kujaribu tena.",
   "couldNotDelete": "Imeshindikana kufuta taarifa hii. Sasisha ukurasa ujaribu tena.",
   "notConnected": "Haijaunganishwa na taarifa zilizohifadhiwa. Mabadiliko yatasubiri hadi muunganisho urejee.",
   "retryConnection": "Jaribu kuunganisha tena",

@@ -262,6 +262,7 @@
   "saveReceipt": "Save receipt",
   "couldNotReceipt": "Could not record this receipt.",
   "couldNotSave": "We could not save this record. Check the fields and try again.",
+  "leaseSavedPdfPending": "Lease saved, but contract PDFs are pending ({{stage}}; {{code}}). Preview or download again to retry.",
   "couldNotDelete": "We could not delete this record. Refresh and try again.",
   "notConnected": "Not connected to saved records. Changes are disabled until connection is restored.",
   "retryConnection": "Retry connection",
