@@ -87,11 +87,11 @@ router.post('/'+type,async(req,res,next)=>{try{let p=clean(schemas[type],req.bod
   if(occupied)return res.status(409).json({error:'This unit already has an active lease'});
   const unit=await prisma.unit.findFirst({where:{id:p.unitId,userId:req.user.sub}});if(!unit)return res.status(404).json({error:'Choose a property from your workspace.'});
   const monthlyRent=Number(ownerUnit.monthlyRent);if(!Number.isFinite(monthlyRent)||monthlyRent<=0)return res.status(400).json({error:'Add a monthly rent to this property before creating its lease.'});const months=leaseMonths(p.startDate,p.endDate);p.monthlyRent=monthlyRent;p.rentAmount=monthlyRent*months;
-  const [lease,owner]=await Promise.all([
-   model.create({data:p,include:includes.leases}),
-   prisma.user.findUnique({where:{id:req.user.sub},select:{id:true,email:true,preferredLanguage:true}})
-  ]);
+  // Load the document owner before inserting the lease. A failed owner lookup
+  // must not leave a lease row behind without starting contract generation.
+  const owner=await prisma.user.findUnique({where:{id:req.user.sub},select:{id:true,email:true,preferredLanguage:true}});
   if(!owner)return res.status(401).json({error:'Please sign in again and retry.'});
+  const lease=await model.create({data:p,include:includes.leases});
   const requestedLanguage=req.get('x-app-language');
   const language=requestedLanguage==='en'||requestedLanguage==='sw'?requestedLanguage:(owner.preferredLanguage==='sw'?'sw':'en');
   let documents=null,contractGeneration=null;
@@ -103,6 +103,19 @@ if(type==='payments'||type==='bills'){const lease=await prisma.lease.findFirst({
  router.put('/'+type+'/:id',async(req,res,next)=>{try{let current=await model.findUnique({where:{id:req.params.id}});if(!current)return res.status(404).json({error:'This record no longer exists. Refresh the list and try again.'});if(['leases','payments','bills'].includes(type)&&!await model.findFirst({where:{id:req.params.id,...(type==='leases'?{unit:{userId:req.user.sub}}:type==='payments'?{lease:{unit:{userId:req.user.sub}}}:{lease:{unit:{userId:req.user.sub}}})}}))return res.status(404).json({error:'This record could not be found in your workspace.'});if((type==='units'||type==='tenants')&&current.userId!==req.user.sub)return res.status(404).json({error:'This record could not be found in your workspace.'});let p=clean(schemas[type],req.body);if(type==='leases'&&await leaseHasReceivedPayment(req.params.id))return res.status(409).json({error:'This lease has received payments and can no longer be edited.'});if(type==='leases'){if(p.endDate<=p.startDate)return res.status(400).json({error:'Lease end date must be after its start date'});if(!isMonthlyRange(p.startDate,p.endDate))return res.status(400).json({error:'Set the lease end date to the day before a monthly term anniversary.'});const [ownerUnit,ownerTenant]=await Promise.all([prisma.unit.findFirst({where:{id:p.unitId,userId:req.user.sub}}),prisma.tenant.findFirst({where:{id:p.tenantId,userId:req.user.sub}})]);if(!ownerUnit||!ownerTenant)return res.status(400).json({error:'Choose a property and tenant from your workspace.'});const months=leaseMonths(p.startDate,p.endDate);p.monthlyRent=p.rentAmount;p.rentAmount=p.monthlyRent*months;p.status=leaseStatus(p.endDate)}if(type==='payments'){const receipts=await prisma.paymentReceipt.findMany({where:{rentPaymentId:req.params.id}}),received=Math.max(Number(current.amountPaid),receipts.reduce((n,r)=>n+Number(r.amount),0));if(p.amountDue<received)return res.status(400).json({error:'The amount due cannot be lower than what the tenant has already paid.'});delete p.amountPaid;delete p.paymentDate;delete p.paymentMethod;delete p.reference;if(p.amountDue>received&&!p.reminderDate)return res.status(400).json({error:'Set a due date for the remaining rent balance.'});p.status=statusForAmounts(p.amountDue,received,p.reminderDate||p.periodEnd)}if(type==='bills')p.status=statusForAmounts(p.amountDue,p.amountPaid,p.dueDate);res.json(await model.update({where:{id:req.params.id},data:p}))}catch(e){next(e)}});
 router.delete('/'+type+'/:id',async(req,res,next)=>{try{let current=await model.findUnique({where:{id:req.params.id}});if(!current)return res.status(404).json({error:'This record was already removed.'});if(['leases','payments','bills'].includes(type)&&!await model.findFirst({where:{id:req.params.id,...(type==='leases'?{unit:{userId:req.user.sub}}:type==='payments'?{lease:{unit:{userId:req.user.sub}}}:{lease:{unit:{userId:req.user.sub}}})}}))return res.status(404).json({error:'This record could not be found in your workspace.'});if((type==='units'||type==='tenants')&&current.userId!==req.user.sub)return res.status(404).json({error:'This record could not be found in your workspace.'});if(type==='leases'&&await leaseHasReceivedPayment(req.params.id))return res.status(409).json({error:'This lease has received payments and can no longer be deleted.'});if(type==='units'){const linked=await prisma.lease.findMany({where:{unitId:req.params.id},select:{id:true}});if(linked.length){await prisma.unit.update({where:{id:req.params.id},data:{isActive:false}});return res.status(204).end()}}await model.delete({where:{id:req.params.id}});res.status(204).end()}catch(e){next(e)}})
 }
+router.post('/leases/:id/contracts/regenerate',async(req,res)=>{
+ let stage='prepare contracts';
+ try{
+  if(!await prisma.lease.findFirst({where:{id:req.params.id,unit:{userId:req.user.sub}}}))return res.status(404).json({error:'This lease could not be found in your workspace.'});
+  stage='generate PDFs and save contract paths';
+  const prepared=await generateAndSaveLeaseDocuments(req.params.id,req.user.sub);
+  return res.json({leaseId:req.params.id,contracts:prepared.docs.map(document=>({language:document.language,filePath:document.filePath}))});
+ }catch(error){
+  stage=error.pdfStage||stage;
+  console.error('[lease contract regeneration]',req.requestId,{leaseId:req.params.id,stage,code:error.code||error.name,message:error.message});
+  return res.status(500).json({error:'Could not generate and save both lease contracts.',stage,requestId:req.requestId,diagnosticCode:error.code||error.name});
+ }
+});
 router.get('/leases/:id/download',async(req,res,next)=>{
  let stage='validate request';
  try{
